@@ -76,37 +76,97 @@
 <fieldset>
   <legend align='center'><%= Spree.t("admin.store_credits.history") %></legend>
   <table>
-    <colgroup>
-      <col style="width: 15%;" />
-      <col style="width: 10%;" />
-      <col style="width: 10%;" />
-      <col style="width: 25%;" />
-      <col style="width: 10%;" />
-      <col style="width: 30%;" />
-    </colgroup>
     <thead>
       <tr>
         <th><%= Spree.t(:date) %></th>
-        <th><%= Spree::StoreCreditEvent.human_attribute_name(:action) %></th>
-        <th><%= Spree::StoreCredit.human_attribute_name(:amount) %></th>
-        <th><%= Spree::StoreCredit.human_attribute_name(:created_by_id) %></th>
-        <th><%= Spree::StoreCreditEvent.human_attribute_name(:user_total_amount) %></th>
-        <th><%= Spree::StoreCreditUpdateReason.human_attribute_name(:name) %></th>
+        <th><%= Spree::StoreCreditLedgerEntry.human_attribute_name(:amount) %></th>
+        <th><%= Spree::StoreCreditLedgerEntry.human_attribute_name(:originator_id) %></th>
+        <th><%= Spree::StoreCreditLedgerEntry.human_attribute_name(:memo) %></th>
+        <th><%= Spree::StoreCreditLedgerEntry.human_attribute_name(:state) %></th>
       </tr>
     </thead>
     <tbody>
-      <% @store_credit_events.each do |event| %>
+      <% @store_credit.ledger_entries.each do |ledger_entry| %>
         <tr>
-          <td data-hook="admin_show_store_credit_date_cell">
-            <%= pretty_time(event.created_at) %>
+          <td>
+            <%= pretty_time(ledger_entry.created_at) %>
           </td>
-          <td><%= store_credit_event_admin_action_name(event) %></td>
-          <td class='align-right'><%= event.display_amount %></td>
-          <td><%= store_credit_event_originator_link(event) %></td>
-          <td class='align-right'><%= event.display_user_total_amount %></td>
-          <td><%= event.update_reason.try!(:name) %></td>
+          <td>
+            <%= ledger_entry.display_amount %>
+          </td>
+          <td>
+            <%= store_credit_event_originator_link(ledger_entry) %>
+          </td>
+          <td>
+            <%= ledger_entry.memo %>
+          </td>
+          <td>
+            <% if ledger_entry.voided? %>
+              [PH] voided
+            <% elsif ledger_entry.cleared? %>
+              [PH] cleared
+            <% else %>
+              [PH] authorized
+            <% end %>
+          </td>
         </tr>
       <% end %>
     </tbody>
   </table>
+
+  <h3>[PH] Balance</h3>
+  <table>
+    <tr>
+      <td>[PH] Cleared Balance</td>
+      <td align='right'><%= @store_credit.ledger.cleared_balance %></td>
+    </tr>
+    <tr>
+      <td>[PH] Uncleared Balance</td>
+      <td align='right'><%= @store_credit.ledger.uncleared_balance %></td>
+    </tr>
+    <tr>
+      <td><strong>[PH] Working Balance</strong></td>
+      <td align='right'><strong><%= @store_credit.ledger.working_balance %></strong></td>
+    </tr>
+  </table>
 </fieldset>
+
+<% if @store_credit_events.any? %>
+  <fieldset>
+    <legend align='center'>[PH] Pre-Ledger Events</legend>
+    <table>
+      <colgroup>
+        <col style="width: 15%;" />
+        <col style="width: 10%;" />
+        <col style="width: 10%;" />
+        <col style="width: 25%;" />
+        <col style="width: 10%;" />
+        <col style="width: 30%;" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th><%= Spree.t(:date) %></th>
+          <th><%= Spree::StoreCreditEvent.human_attribute_name(:action) %></th>
+          <th><%= Spree::StoreCredit.human_attribute_name(:amount) %></th>
+          <th><%= Spree::StoreCredit.human_attribute_name(:created_by_id) %></th>
+          <th><%= Spree::StoreCreditEvent.human_attribute_name(:user_total_amount) %></th>
+          <th><%= Spree::StoreCreditUpdateReason.human_attribute_name(:name) %></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @store_credit_events.each do |event| %>
+          <tr>
+            <td data-hook="admin_show_store_credit_date_cell">
+              <%= pretty_time(event.created_at) %>
+            </td>
+            <td><%= store_credit_event_admin_action_name(event) %></td>
+            <td class='align-right'><%= event.display_amount %></td>
+            <td><%= store_credit_event_originator_link(event) %></td>
+            <td class='align-right'><%= event.display_user_total_amount %></td>
+            <td><%= event.update_reason.try!(:name) %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </fieldset>
+<% end %>

@@ -17,6 +17,7 @@ class Spree::StoreCredit < Spree::Base
   belongs_to :category, class_name: "Spree::StoreCreditCategory"
   belongs_to :credit_type, class_name: 'Spree::StoreCreditType', foreign_key: 'type_id'
   has_many :store_credit_events
+  has_many :ledger_entries, class_name: 'Spree::StoreCreditLedgerEntry'
 
   validates_presence_of :user_id, :category_id, :type_id, :created_by_id, :currency
   validates_numericality_of :amount, { greater_than: 0 }
@@ -29,6 +30,7 @@ class Spree::StoreCredit < Spree::Base
 
   scope :order_by_priority, -> { includes(:credit_type).order('spree_store_credit_types.priority ASC') }
 
+  after_create :create_initial_ledger_entry
   after_save :store_event
   before_validation :associate_credit_type
   before_validation :validate_category_unchanged, on: :update
@@ -64,6 +66,7 @@ class Spree::StoreCredit < Spree::Base
 
         amount_authorized: amount_authorized + amount
       })
+      ledger.debit(amount, authorization_code, options[:action_originator])
       authorization_code
     else
       errors.add(:base, Spree.t('store_credit.insufficient_authorized_amount'))
@@ -83,6 +86,7 @@ class Spree::StoreCredit < Spree::Base
   def capture(amount, authorization_code, order_currency, options = {})
     return false unless authorize(amount, order_currency, action_authorization_code: authorization_code)
     auth_event = store_credit_events.find_by!(action: AUTHORIZE_ACTION, authorization_code: authorization_code)
+    ledger_entry = ledger_entries.find_by(authorization_code: authorization_code)
 
     if amount <= auth_event.amount
       if currency != order_currency
@@ -98,6 +102,9 @@ class Spree::StoreCredit < Spree::Base
           amount_used: amount_used + amount,
           amount_authorized: amount_authorized - auth_event.amount
         })
+        # If the ledger entry isn't available it is likely because that
+        # transaction is from before the ledger was available
+        ledger.clear(ledger_entry) if ledger_entry
         authorization_code
       end
     else
@@ -107,7 +114,15 @@ class Spree::StoreCredit < Spree::Base
   end
 
   def void(authorization_code, options = {})
-    if auth_event = store_credit_events.find_by(action: AUTHORIZE_ACTION, authorization_code: authorization_code)
+     auth_event = store_credit_events.find_by(
+       action: AUTHORIZE_ACTION,
+       authorization_code: authorization_code
+     )
+     ledger_entry = ledger_entries.find_by(
+       authorization_code: authorization_code
+     )
+
+    if auth_event
       update_attributes!({
         action: VOID_ACTION,
         action_amount: auth_event.amount,
@@ -116,6 +131,7 @@ class Spree::StoreCredit < Spree::Base
 
         amount_authorized: amount_authorized - auth_event.amount
       })
+      ledger.void(ledger_entry) if ledger_entry
       true
     else
       errors.add(:base, Spree.t('store_credit.unable_to_void', auth_code: authorization_code))
@@ -193,7 +209,18 @@ class Spree::StoreCredit < Spree::Base
       self.update_reason = reason
       self.action_originator = user_performing_invalidation
       self.invalidated_at = Time.current
-      save
+      save!
+      # Void all outstanding entries
+      ledger_entries.reject(&:settled?).each do |entry|
+        ledger.void(entry)
+      end
+      entry = ledger.debit(
+        ledger.cleared_balance.to_d,
+        generate_authorization_code,
+        user_performing_invalidation,
+        "[PH] Invalidation"
+      )
+      ledger.clear(entry)
     else
       errors.add(:invalidated_at, Spree.t("store_credit.errors.cannot_invalidate_uncaptured_authorization"))
       return false
@@ -204,6 +231,10 @@ class Spree::StoreCredit < Spree::Base
     def default_created_by
       Spree.user_class.find_by(email: DEFAULT_CREATED_BY_EMAIL)
     end
+  end
+
+  def ledger
+    @ledger ||= Spree::StoreCreditLedger.new(self)
   end
 
   private
@@ -220,6 +251,8 @@ class Spree::StoreCredit < Spree::Base
 
     credit.assign_attributes(action_attributes)
     credit.save!
+    entry = credit.ledger.credit(amount, action_attributes[:action_originator])
+    credit.ledger.clear(entry)
   end
 
   def create_credit_record_params(amount)
@@ -287,5 +320,10 @@ class Spree::StoreCredit < Spree::Base
       credit_type_name = category.try(:non_expiring?) ? Spree.t("store_credit.non_expiring") : Spree.t("store_credit.expiring")
       self.credit_type = Spree::StoreCreditType.find_by_name(credit_type_name)
     end
+  end
+
+  def create_initial_ledger_entry
+    entry = ledger.credit(amount, action_originator, "[PH] Initial Creation")
+    ledger.clear(entry)
   end
 end
